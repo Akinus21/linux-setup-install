@@ -224,6 +224,9 @@ log "Cloning private repo $REPO"
 
 gh repo clone "$REPO" "$INSTALL_DIR"
 
+git -C "$INSTALL_DIR" remote set-url origin \
+"https://$(gh auth token)@github.com/$REPO.git"
+
 }
 
 ########################################
