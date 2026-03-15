@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-REPO="YOURNAME/linux-setup"
 INSTALL_DIR="$HOME/.linux-setup"
 BIN_DIR="$HOME/.local/bin"
 
@@ -128,7 +127,6 @@ log "Installing distrobox"
 flatpak install -y flathub io.github.dvlv.boxbuddyrs || true
 
 if ! command -v distrobox &>/dev/null; then
-    warn "Installing distrobox via package manager"
     detect_pm
     install_pkg distrobox
 fi
@@ -170,6 +168,30 @@ install_pkg gh
 }
 
 ########################################
+# ENSURE GIT USERNAME
+########################################
+
+ensure_git_user(){
+
+GIT_USER=$(git config --global user.name || true)
+
+if [[ -z "$GIT_USER" ]]; then
+
+warn "git global user.name not configured"
+
+read -p "Enter your GitHub username: " GIT_USER
+
+git config --global user.name "$GIT_USER"
+
+ok "git user.name set to $GIT_USER"
+
+fi
+
+REPO="$GIT_USER/linux-setup"
+
+}
+
+########################################
 # AUTHENTICATE GITHUB
 ########################################
 
@@ -198,7 +220,7 @@ if [ -d "$INSTALL_DIR" ]; then
     return
 fi
 
-log "Cloning private repo"
+log "Cloning private repo $REPO"
 
 gh repo clone "$REPO" "$INSTALL_DIR"
 
@@ -223,11 +245,11 @@ ensure_path(){
 
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
 
-    warn "$BIN_DIR not in PATH"
+warn "$BIN_DIR not in PATH"
 
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 
-    warn "Restart shell after install"
+warn "Restart shell after install"
 
 fi
 
@@ -241,6 +263,7 @@ log "Installing linux-setup"
 
 ensure_git
 ensure_gh
+ensure_git_user
 ensure_auth
 clone_repo
 install_cli
