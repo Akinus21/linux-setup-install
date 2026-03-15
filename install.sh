@@ -76,44 +76,29 @@ ensure_git(){ [[ ! -x $(command -v git) ]] && detect_pm && install_pkg git || tr
 ensure_gh(){ [[ ! -x $(command -v gh) ]] && detect_pm && install_pkg gh || true; }
 
 ########################################
-# GIT SYNC LOGIC
+# SYNC LOGIC (Favoring Remote)
 ########################################
 clone_or_sync_repo(){
     USER=$(gh api user --jq .login)
     REPO_URL="git@github.com:$USER/linux-setup.git"
 
     if [ -d "$INSTALL_DIR/.git" ]; then
-        log "Syncing existing installation..."
+        log "Syncing existing installation (Favoring Remote)..."
         cd "$INSTALL_DIR"
+        
+        # Ensure remote URL is correct
         git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL"
         
-        if ! git diff --quiet || ! git diff --cached --quiet; then
-            log "Committing local changes..."
-            git add -A && git commit -m "Install-sync: $(date '+%F')"
-        fi
+        # 1. Fetch latest changes without merging
+        log "Fetching latest from GitHub..."
+        git fetch origin main || { err "Fetch failed. Check connection."; return 1; }
 
-        log "Fetching from GitHub..."
-        git fetch origin main || { err "Fetch failed"; return 1; }
-
-        LOCAL=$(git rev-parse HEAD)
-        REMOTE=$(git rev-parse origin/main 2>/dev/null || echo "none")
-        [[ "$REMOTE" == "none" ]] && { git push -u origin main; return; }
-
-        BASE=$(git merge-base HEAD origin/main)
-
-        if [[ "$LOCAL" == "$REMOTE" ]]; then
-            ok "Up to date"
-        elif [[ "$LOCAL" == "$BASE" ]]; then
-            git pull --no-rebase origin main
-        elif [[ "$REMOTE" == "$BASE" ]]; then
-            git push origin main
-        else
-            warn "Diverged branch detected!"
-            read -p "Keep [l]ocal or use [r]emote? " choice
-            [[ "$choice" =~ ^[rR]$ ]] && git reset --hard origin/main || git push --force-with-lease origin main
-        fi
+        # 2. Force reset local to match remote (Discards local installation changes)
+        log "Resetting local repo to match origin/main..."
+        git reset --hard origin/main
+        ok "Local repo synchronized with GitHub."
     else
-        log "Cloning repository..."
+        log "Cloning repository for the first time..."
         git clone "$REPO_URL" "$INSTALL_DIR"
     fi
 }
@@ -122,16 +107,18 @@ clone_or_sync_repo(){
 # MAIN
 ########################################
 detect_logging
-log "Starting linux-setup installation"
+log "Starting linux-setup installation/update"
 
 ensure_git
 ensure_gh
 
+# Ensure Auth
 if ! gh auth status &>/dev/null; then
     log "Authenticating GitHub CLI"
     gh auth login -h github.com -p ssh -w
 fi
 
+# Ensure Identity
 [[ -z "$(git config --global user.name)" ]] && read -p "Git Name: " GN && git config --global user.name "$GN"
 [[ -z "$(git config --global user.email)" ]] && read -p "Git Email: " GE && git config --global user.email "$GE"
 
@@ -147,30 +134,31 @@ if ! git ls-remote "git@github.com:$REPO.git" &>/dev/null; then
     gh ssh-key add "$KEY.pub" --title "$(hostname)-setup" || true
 fi
 
+# Link GH to Git
 gh auth setup-git >/dev/null 2>&1 || true
 
+# Perform Sync
 clone_or_sync_repo
-ok "Repository synced"
 
-# Install CLI
+# Install/Update CLI
 if [[ -f "$INSTALL_DIR/linux-setup.sh" ]]; then
     cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
     chmod +x "$BIN_DIR/linux-setup"
     ok "CLI installed to $BIN_DIR"
 else
-    err "linux-setup.sh missing in repo"
+    err "linux-setup.sh missing in repository"
     exit 1
 fi
 
-# Ensure Path
+# Path Check
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
     RC="$HOME/.bashrc"; [[ "$SHELL" == */zsh ]] && RC="$HOME/.zshrc"
     echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$RC"
-    warn "Added to $RC. Restart shell after finish."
+    warn "Added $BIN_DIR to $RC. Please restart your terminal."
 fi
 
-log "Running post-install doctor..."
-# Using full path in case PATH isn't refreshed yet
-"$BIN_DIR/linux-setup" list || true
+# Run Doctor
+log "Running post-install system check..."
+"$BIN_DIR/linux-setup" doctor || true
 
 ok "Installation complete!"
