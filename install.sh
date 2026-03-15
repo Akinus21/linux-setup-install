@@ -232,8 +232,17 @@ gh repo clone "$REPO" "$INSTALL_DIR"
 
 install_cli(){
 
-cp "$INSTALL_DIR/linux-setup" "$BIN_DIR/linux-setup"
+SCRIPT="$INSTALL_DIR/linux-setup.sh"
+
+if [[ ! -f "$SCRIPT" ]]; then
+    err "linux-setup.sh not found in repo"
+    exit 1
+fi
+
+cp "$SCRIPT" "$BIN_DIR/linux-setup"
 chmod +x "$BIN_DIR/linux-setup"
+
+ok "CLI installed"
 
 }
 
