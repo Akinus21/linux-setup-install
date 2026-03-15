@@ -154,32 +154,34 @@ fi
 
 setup_ssh(){
 
+USER=$(gh api user --jq .login)
+REPO="$USER/linux-setup"
+
 log "Checking GitHub SSH access"
+
+if git ls-remote "git@github.com:$REPO.git" &>/dev/null; then
+    ok "GitHub SSH already configured"
+    return
+fi
+
+log "SSH not configured — setting it up"
+
+KEY="$HOME/.ssh/id_ed25519"
 
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
 ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-SSH_TEST=$(ssh -o BatchMode=yes -T git@github.com 2>&1)
-
-if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
-    ok "GitHub SSH already configured"
-else
-
-    KEY="$HOME/.ssh/id_ed25519"
-
-    if [[ ! -f "$KEY" ]]; then
-        log "Generating SSH key"
-        ssh-keygen -t ed25519 -N "" -f "$KEY"
-    fi
-
-    log "Uploading SSH key to GitHub"
-    gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
-
-    ok "SSH authentication configured"
-
+if [[ ! -f "$KEY" ]]; then
+    log "Generating SSH key"
+    ssh-keygen -t ed25519 -N "" -f "$KEY"
 fi
+
+log "Uploading SSH key to GitHub"
+gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
+
+ok "SSH authentication configured"
 
 }
 
