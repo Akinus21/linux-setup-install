@@ -50,9 +50,18 @@ pkg="$1"
 
 case "$PM" in
 
-apt) sudo apt update && sudo apt install -y "$pkg" ;;
-dnf) sudo dnf install -y "$pkg" ;;
-pacman) sudo pacman -S --noconfirm "$pkg" ;;
+apt)
+sudo apt update
+sudo apt install -y "$pkg"
+;;
+
+dnf)
+sudo dnf install -y "$pkg"
+;;
+
+pacman)
+sudo pacman -S --noconfirm "$pkg"
+;;
 
 atomic)
 
@@ -69,10 +78,12 @@ if ! command -v distrobox &>/dev/null; then
 fi
 
 distrobox enter cli -- sudo dnf install -y "$pkg" || true
-
 ;;
 
-*) err "Unsupported distro"; exit 1 ;;
+*)
+err "Unsupported distro"
+exit 1
+;;
 
 esac
 
@@ -146,33 +157,37 @@ setup_ssh(){
 
 log "Checking GitHub SSH access"
 
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+
+# Avoid first-time SSH prompt
+ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
 if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
     ok "GitHub SSH already configured"
-    return
+else
+
+    KEY="$HOME/.ssh/id_ed25519"
+
+    if [[ ! -f "$KEY" ]]; then
+
+        log "Generating SSH key"
+
+        ssh-keygen -t ed25519 -N "" -f "$KEY"
+
+    fi
+
+    log "Uploading SSH key to GitHub"
+
+    gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
+
+    log "Testing SSH authentication"
+
+    ssh -T git@github.com || true
+
+    ok "SSH authentication configured"
+
 fi
-
-KEY="$HOME/.ssh/id_ed25519"
-
-if [[ ! -f "$KEY" ]]; then
-
-    log "Generating SSH key"
-
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-
-    ssh-keygen -t ed25519 -N "" -f "$KEY"
-
-fi
-
-log "Uploading SSH key to GitHub"
-
-gh ssh-key add "$KEY.pub" --title "$(hostname)"
-
-log "Testing SSH authentication"
-
-ssh -T git@github.com || true
-
-ok "SSH authentication configured"
 
 }
 
@@ -182,29 +197,33 @@ ok "SSH authentication configured"
 
 setup_git_auth(){
 
-gh auth setup-git
+gh auth setup-git >/dev/null 2>&1 || true
 
 }
 
 ########################################
-# Clone repo via SSH
+# Clone or update repo
 ########################################
 
 clone_repo(){
 
 USER=$(gh api user --jq .login)
-
 REPO="$USER/linux-setup"
 
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR/.git" ]; then
+
     log "Updating existing install"
+
+    git -C "$INSTALL_DIR" remote set-url origin "git@github.com:$REPO.git" || true
     git -C "$INSTALL_DIR" pull
-    return
+
+else
+
+    log "Cloning repo via SSH"
+
+    git clone "git@github.com:$REPO.git" "$INSTALL_DIR"
+
 fi
-
-log "Cloning repo via SSH"
-
-git clone "git@github.com:$REPO.git" "$INSTALL_DIR"
 
 }
 
@@ -214,8 +233,15 @@ git clone "git@github.com:$REPO.git" "$INSTALL_DIR"
 
 install_cli(){
 
+if [[ ! -f "$INSTALL_DIR/linux-setup.sh" ]]; then
+    err "linux-setup.sh not found in repo"
+    exit 1
+fi
+
 cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
 chmod +x "$BIN_DIR/linux-setup"
+
+ok "CLI installed"
 
 }
 
@@ -226,7 +252,13 @@ chmod +x "$BIN_DIR/linux-setup"
 ensure_path(){
 
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
+
+    warn "$BIN_DIR not in PATH"
+
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+
+    warn "Restart shell after install"
+
 fi
 
 }
