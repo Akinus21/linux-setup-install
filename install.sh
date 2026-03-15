@@ -3,7 +3,6 @@ set -e
 
 INSTALL_DIR="$HOME/.linux-setup"
 BIN_DIR="$HOME/.local/bin"
-
 mkdir -p "$BIN_DIR"
 
 ########################################
@@ -22,7 +21,7 @@ warn(){ echo -e "${YELLOW}!${RESET} $1"; }
 err(){ echo -e "${RED}✘${RESET} $1"; }
 
 ########################################
-# DETECT PACKAGE MANAGER
+# Detect package manager
 ########################################
 
 detect_pm(){
@@ -35,8 +34,6 @@ elif command -v dnf &>/dev/null; then
     PM="dnf"
 elif command -v pacman &>/dev/null; then
     PM="pacman"
-elif command -v zypper &>/dev/null; then
-    PM="zypper"
 else
     PM="unknown"
 fi
@@ -44,7 +41,7 @@ fi
 }
 
 ########################################
-# INSTALL PACKAGE
+# Install package
 ########################################
 
 install_pkg(){
@@ -53,216 +50,183 @@ pkg="$1"
 
 case "$PM" in
 
-apt)
-sudo apt update
-sudo apt install -y "$pkg"
-;;
-
-dnf)
-sudo dnf install -y "$pkg"
-;;
-
-pacman)
-sudo pacman -S --noconfirm "$pkg"
-;;
-
-zypper)
-sudo zypper install -y "$pkg"
-;;
+apt) sudo apt update && sudo apt install -y "$pkg" ;;
+dnf) sudo dnf install -y "$pkg" ;;
+pacman) sudo pacman -S --noconfirm "$pkg" ;;
 
 atomic)
 
-warn "Atomic distro detected"
+log "Atomic distro detected"
 
-ensure_distrobox
+if ! command -v distrobox &>/dev/null; then
 
-distrobox enter cli -- sudo dnf install -y "$pkg" || \
-distrobox enter cli -- sudo apt install -y "$pkg" || \
-distrobox enter cli -- sudo pacman -S --noconfirm "$pkg"
+    if ! command -v flatpak &>/dev/null; then
+        warn "flatpak required. install manually."
+        exit 1
+    fi
+
+    flatpak install -y flathub io.github.dvlv.boxbuddyrs
+fi
+
+distrobox enter cli -- sudo dnf install -y "$pkg" || true
 
 ;;
 
-*)
-
-err "Unsupported distro. Install $pkg manually."
-exit 1
-
-;;
+*) err "Unsupported distro"; exit 1 ;;
 
 esac
 
 }
 
 ########################################
-# ENSURE FLATPAK
-########################################
-
-ensure_flatpak(){
-
-if command -v flatpak &>/dev/null; then
-    return
-fi
-
-log "Installing flatpak"
-
-detect_pm
-install_pkg flatpak
-
-}
-
-########################################
-# ENSURE DISTROBOX
-########################################
-
-ensure_distrobox(){
-
-if command -v distrobox &>/dev/null; then
-    return
-fi
-
-ensure_flatpak
-
-log "Installing distrobox"
-
-flatpak install -y flathub io.github.dvlv.boxbuddyrs || true
-
-if ! command -v distrobox &>/dev/null; then
-    detect_pm
-    install_pkg distrobox
-fi
-
-}
-
-########################################
-# ENSURE GIT
+# Ensure git
 ########################################
 
 ensure_git(){
 
-if command -v git &>/dev/null; then
-    return
+if ! command -v git &>/dev/null; then
+    detect_pm
+    install_pkg git
 fi
-
-log "Installing git"
-
-detect_pm
-install_pkg git
 
 }
 
 ########################################
-# ENSURE GITHUB CLI
+# Ensure GitHub CLI
 ########################################
 
 ensure_gh(){
 
-if command -v gh &>/dev/null; then
+if ! command -v gh &>/dev/null; then
+    detect_pm
+    install_pkg gh
+fi
+
+}
+
+########################################
+# GitHub authentication
+########################################
+
+ensure_gh_auth(){
+
+if ! gh auth status &>/dev/null; then
+    log "Authenticating GitHub"
+    gh auth login
+fi
+
+}
+
+########################################
+# Configure git identity
+########################################
+
+ensure_git_identity(){
+
+NAME=$(git config --global user.name || true)
+EMAIL=$(git config --global user.email || true)
+
+if [[ -z "$NAME" ]]; then
+    read -p "Git user.name: " NAME
+    git config --global user.name "$NAME"
+fi
+
+if [[ -z "$EMAIL" ]]; then
+    read -p "Git user.email: " EMAIL
+    git config --global user.email "$EMAIL"
+fi
+
+}
+
+########################################
+# Setup SSH authentication
+########################################
+
+setup_ssh(){
+
+log "Checking GitHub SSH access"
+
+if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    ok "GitHub SSH already configured"
     return
 fi
 
-log "Installing GitHub CLI"
+KEY="$HOME/.ssh/id_ed25519"
 
-detect_pm
-install_pkg gh
+if [[ ! -f "$KEY" ]]; then
 
-}
+    log "Generating SSH key"
 
-########################################
-# ENSURE GIT USERNAME
-########################################
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
 
-ensure_git_user(){
-
-GIT_USER=$(git config --global user.name || true)
-
-if [[ -z "$GIT_USER" ]]; then
-
-warn "git global user.name not configured"
-
-read -p "Enter your GitHub username: " GIT_USER
-
-git config --global user.name "$GIT_USER"
-
-ok "git user.name set to $GIT_USER"
+    ssh-keygen -t ed25519 -N "" -f "$KEY"
 
 fi
 
-REPO="$GIT_USER/linux-setup"
+log "Uploading SSH key to GitHub"
+
+gh ssh-key add "$KEY.pub" --title "$(hostname)"
+
+log "Testing SSH authentication"
+
+ssh -T git@github.com || true
+
+ok "SSH authentication configured"
 
 }
 
 ########################################
-# AUTHENTICATE GITHUB
+# Configure git to use gh credentials
 ########################################
 
-ensure_auth(){
+setup_git_auth(){
 
-if gh auth status &>/dev/null; then
-    ok "GitHub already authenticated"
-    return
-fi
-
-log "GitHub authentication required"
-gh auth login
+gh auth setup-git
 
 }
 
 ########################################
-# CLONE PRIVATE REPO
+# Clone repo via SSH
 ########################################
 
 clone_repo(){
 
+USER=$(gh api user --jq .login)
+
+REPO="$USER/linux-setup"
+
 if [ -d "$INSTALL_DIR" ]; then
     log "Updating existing install"
-    cd "$INSTALL_DIR"
-    git pull
+    git -C "$INSTALL_DIR" pull
     return
 fi
 
-log "Cloning private repo $REPO"
+log "Cloning repo via SSH"
 
-gh repo clone "$REPO" "$INSTALL_DIR"
-
-git -C "$INSTALL_DIR" remote set-url origin \
-"https://$(gh auth token)@github.com/$REPO.git"
+git clone "git@github.com:$REPO.git" "$INSTALL_DIR"
 
 }
 
 ########################################
-# INSTALL CLI
+# Install CLI
 ########################################
 
 install_cli(){
 
-SCRIPT="$INSTALL_DIR/linux-setup.sh"
-
-if [[ ! -f "$SCRIPT" ]]; then
-    err "linux-setup.sh not found in repo"
-    exit 1
-fi
-
-cp "$SCRIPT" "$BIN_DIR/linux-setup"
+cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
 chmod +x "$BIN_DIR/linux-setup"
-
-ok "CLI installed"
 
 }
 
 ########################################
-# ENSURE PATH
+# Ensure PATH
 ########################################
 
 ensure_path(){
 
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
-
-warn "$BIN_DIR not in PATH"
-
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-
-warn "Restart shell after install"
-
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 fi
 
 }
@@ -275,17 +239,12 @@ log "Installing linux-setup"
 
 ensure_git
 ensure_gh
-ensure_git_user
-ensure_auth
+ensure_gh_auth
+ensure_git_identity
+setup_ssh
+setup_git_auth
 clone_repo
 install_cli
 ensure_path
 
 ok "linux-setup installed"
-
-echo
-echo "Run:"
-echo
-echo "  linux-setup --sync"
-echo "  linux-setup list"
-echo
