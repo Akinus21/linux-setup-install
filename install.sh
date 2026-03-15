@@ -160,29 +160,28 @@ log "Checking GitHub SSH access"
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
-# Avoid first-time SSH prompt
 ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+# Temporarily disable set -e
+set +e
+SSH_TEST=$(ssh -T git@github.com 2>&1)
+set -e
+
+if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     ok "GitHub SSH already configured"
 else
 
     KEY="$HOME/.ssh/id_ed25519"
 
     if [[ ! -f "$KEY" ]]; then
-
         log "Generating SSH key"
-
         ssh-keygen -t ed25519 -N "" -f "$KEY"
-
     fi
 
     log "Uploading SSH key to GitHub"
-
     gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
 
     log "Testing SSH authentication"
-
     ssh -T git@github.com || true
 
     ok "SSH authentication configured"
@@ -192,7 +191,7 @@ fi
 }
 
 ########################################
-# Configure git to use gh credentials
+# Configure git authentication
 ########################################
 
 setup_git_auth(){
