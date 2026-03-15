@@ -120,11 +120,7 @@ fi
 
 ensure_gh_auth(){
 
-set +e
-gh auth status &>/dev/null
-AUTH_STATUS=$?
-
-if [[ $AUTH_STATUS -ne 0 ]]; then
+if ! gh auth status &>/dev/null; then
     log "Authenticating GitHub"
     gh auth login
 fi
@@ -165,7 +161,7 @@ chmod 700 "$HOME/.ssh"
 
 ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-SSH_TEST=$(ssh -T git@github.com 2>&1)
+SSH_TEST=$(ssh -o BatchMode=yes -T git@github.com 2>&1)
 
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     ok "GitHub SSH already configured"
@@ -180,11 +176,6 @@ else
 
     log "Uploading SSH key to GitHub"
     gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
-
-    log "Testing SSH authentication"
-
-    ssh -T git@github.com
-    
 
     ok "SSH authentication configured"
 
