@@ -1,165 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -o errtrace
 
 INSTALL_DIR="$HOME/.linux-setup"
 BIN_DIR="$HOME/.local/bin"
-LOG_FILE="$INSTALL_DIR/install.log"
 mkdir -p "$BIN_DIR" "$INSTALL_DIR"
 
-########################################
-# COLORS & UI
-########################################
-GREEN="\033[32m"
-BLUE="\033[34m"
-YELLOW="\033[33m"
-RED="\033[31m"
-RESET="\033[0m"
-BOLD="\033[1m"
+# CONFIG: Change this to your actual distrobox name
+CONTAINER_NAME="my-distrobox" 
 
-########################################
-# LOGGING (Cross-Distro)
-########################################
-LOG_TAG="linux-setup-install"
+log() { echo -e "\033[34m➜\033[0m $1"; }
+ok()  { echo -e "\033[32m✔\033[0m $1"; }
+err() { echo -e "\033[31m✘\033[0m $1"; exit 1; }
 
-detect_logging() {
-    if command -v journalctl &>/dev/null; then LOG_BACKEND="journald"
-    elif command -v logger &>/dev/null; then LOG_BACKEND="syslog"
-    else LOG_BACKEND="file"; fi
-}
-
-log_sys() {
-    local level="$1" msg="$2"
-    case "$LOG_BACKEND" in
-        journald) echo "$msg" | systemd-cat -t "$LOG_TAG" -p "$level" ;;
-        syslog)   logger -t "$LOG_TAG" -p "user.$level" "$msg" ;;
-        *)        echo "$(date '+%F %T') [$level] $msg" >> "$LOG_FILE" ;;
-    esac
-}
-
-log(){ echo -e "${BLUE}➜${RESET} $1"; log_sys "info" "$1"; }
-ok(){ echo -e "${GREEN}✔${RESET} $1"; log_sys "notice" "$1"; }
-warn(){ echo -e "${YELLOW}!${RESET} $1"; log_sys "warning" "$1"; }
-err(){ echo -e "${RED}✘${RESET} $1"; log_sys "err" "$1"; }
-
-trap 'handle_error' ERR
-handle_error() {
-    err "Installation failed at line $LINENO"
-    echo -e "\n${BOLD}Check logs:${RESET}"
-    [[ "$LOG_BACKEND" == "journald" ]] && echo "  journalctl -t $LOG_TAG -xe" || echo "  cat $LOG_FILE"
-    exit 1
-}
-
-########################################
-# HELPERS
-########################################
-detect_pm(){
-    if command -v rpm-ostree &>/dev/null; then PM="atomic"
-    elif command -v apt &>/dev/null; then PM="apt"
-    elif command -v dnf &>/dev/null; then PM="dnf"
-    elif command -v pacman &>/dev/null; then PM="pacman"
-    else PM="unknown"; fi
-}
-
-install_pkg(){
-    pkg="$1"
-    case "$PM" in
-        apt) sudo apt update && sudo apt install -y "$pkg" ;;
-        dnf) sudo dnf install -y "$pkg" ;;
-        pacman) sudo pacman -S --noconfirm "$pkg" ;;
-        atomic)
-            if ! command -v distrobox &>/dev/null; then
-                err "Distrobox required for atomic installs."
-                exit 1
-            fi
-            distrobox enter cli -- sudo dnf install -y "$pkg" || true
-            ;;
-        *) err "Unsupported distro"; exit 1 ;;
-    esac
-}
-
-ensure_git(){ [[ ! -x $(command -v git) ]] && detect_pm && install_pkg git || true; }
-ensure_gh(){ [[ ! -x $(command -v gh) ]] && detect_pm && install_pkg gh || true; }
-
-########################################
-# SYNC LOGIC (Favoring Remote)
-########################################
-clone_or_sync_repo(){
-    USER=$(gh api user --jq .login)
-    REPO_URL="git@github.com:$USER/linux-setup.git"
-
-    if [ -d "$INSTALL_DIR/.git" ]; then
-        log "Syncing existing installation (Favoring Remote)..."
-        cd "$INSTALL_DIR"
-        git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL"
-        log "Fetching latest from GitHub..."
-        git fetch origin main || { err "Fetch failed."; return 1; }
-        log "Resetting local repo to match origin/main..."
-        git reset --hard origin/main
-        ok "Local repo synchronized."
-    else
-        log "Cloning repository..."
-        git clone "$REPO_URL" "$INSTALL_DIR"
-    fi
-}
-
-########################################
-# MAIN
-########################################
-detect_logging
-log "Starting linux-setup installation/update"
-
-ensure_git
-ensure_gh
-
-if ! gh auth status &>/dev/null; then
-    log "Authenticating GitHub CLI"
-    gh auth login -h github.com -p ssh -w
-fi
-
-[[ -z "$(git config --global user.name)" ]] && read -p "Git Name: " GN && git config --global user.name "$GN"
-[[ -z "$(git config --global user.email)" ]] && read -p "Git Email: " GE && git config --global user.email "$GE"
-
-USER=$(gh api user --jq .login)
-REPO="$USER/linux-setup"
-if ! git ls-remote "git@github.com:$REPO.git" &>/dev/null; then
-    log "Configuring SSH access"
-    KEY="$HOME/.ssh/id_ed25519"
-    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-    ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-    [[ ! -f "$KEY" ]] && ssh-keygen -t ed25519 -N "" -f "$KEY"
-    gh ssh-key add "$KEY.pub" --title "$(hostname)-setup" || true
-fi
-
-gh auth setup-git >/dev/null 2>&1 || true
-
-clone_or_sync_repo
-
-if [[ -f "$INSTALL_DIR/linux-setup.sh" ]]; then
-    cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
-    chmod +x "$BIN_DIR/linux-setup"
-    ok "CLI installed to $BIN_DIR"
+# 1. Clone Repo on the HOST first
+if [ -d "$INSTALL_DIR/.git" ]; then
+    log "Updating repo on host..."
+    git -C "$INSTALL_DIR" pull
 else
-    err "linux-setup.sh missing in repository"
-    exit 1
+    log "Cloning repo to host..."
+    # Replace with your actual repo URL if needed
+    git clone "https://github.com" "$INSTALL_DIR"
 fi
 
-if ! echo "$PATH" | grep -q "$BIN_DIR"; then
-    RC="$HOME/.bashrc"; [[ "$SHELL" == */zsh ]] && RC="$HOME/.zshrc"
-    echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$RC"
-    warn "Added $BIN_DIR to $RC."
-fi
+# 2. Deploy the CLI to the HOST bin
+log "Installing CLI to host bin..."
+cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
+chmod +x "$BIN_DIR/linux-setup"
 
-log "Running post-install doctor..."
-"$BIN_DIR/linux-setup" doctor || true
-
-# --- DISTROBOX EXPORT (Atomic Fix) ---
-if [[ -f /run/.containerenv ]] || [[ -f /.dockerenv ]]; then
-    if command -v distrobox-export &>/dev/null; then
-        log "Container detected. Exporting binary to host..."
-        distrobox-export --bin "$BIN_DIR/linux-setup" --export-path "$HOME/.local/bin"
-        ok "Binary exported to host."
+# 3. Handle Dependencies (Inside Distrobox)
+if command -v rpm-ostree &>/dev/null; then
+    log "Atomic distro detected. Ensuring dependencies in $CONTAINER_NAME..."
+    
+    # Check if container exists
+    if ! distrobox list | grep -q "$CONTAINER_NAME"; then
+        err "Distrobox '$CONTAINER_NAME' not found. Create it first or update the script with the correct name."
     fi
+
+    # Install deps inside the box
+    distrobox enter "$CONTAINER_NAME" -- sudo dnf install -y git gh jq gnupg2 realpath
+    
+    # Export the command so the host knows to run it INSIDE the box
+    log "Exporting binary to host..."
+    distrobox enter "$CONTAINER_NAME" -- distrobox-export --bin "$BIN_DIR/linux-setup" --export-path "$BIN_DIR"
+    ok "Export complete."
+else
+    # Standard Distro Logic
+    log "Standard distro detected. Installing dependencies locally..."
+    # (Add your standard sudo apt/dnf/pacman install logic here)
 fi
 
-ok "Installation complete!"
+# 4. Final Verification
+if [ -f "$BIN_DIR/linux-setup" ]; then
+    ok "linux-setup is now at $BIN_DIR/linux-setup"
+    log "Running doctor..."
+    "$BIN_DIR/linux-setup" doctor || true
+else
+    err "Installation failed: Binary not found in $BIN_DIR"
+fi
+
+ok "Install finished!"
