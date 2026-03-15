@@ -121,7 +121,12 @@ fi
 
 ensure_gh_auth(){
 
-if ! gh auth status &>/dev/null; then
+set +e
+gh auth status &>/dev/null
+AUTH_STATUS=$?
+set -e
+
+if [[ $AUTH_STATUS -ne 0 ]]; then
     log "Authenticating GitHub"
     gh auth login
 fi
@@ -162,7 +167,6 @@ chmod 700 "$HOME/.ssh"
 
 ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-# Temporarily disable set -e
 set +e
 SSH_TEST=$(ssh -T git@github.com 2>&1)
 set -e
@@ -182,7 +186,10 @@ else
     gh ssh-key add "$KEY.pub" --title "$(hostname)" || true
 
     log "Testing SSH authentication"
-    ssh -T git@github.com || true
+
+    set +e
+    ssh -T git@github.com
+    set -e
 
     ok "SSH authentication configured"
 
