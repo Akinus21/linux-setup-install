@@ -45,7 +45,7 @@ err(){ echo -e "${RED}✘${RESET} $1"; log_sys "err" "$1"; }
 trap 'handle_error' ERR
 handle_error() {
     err "Installation failed at line $LINENO"
-    echo -e "\n${BOLD}Check logs:${NC}"
+    echo -e "\n${BOLD}Check logs:${RESET}"
     [[ "$LOG_BACKEND" == "journald" ]] && echo "  journalctl -t $LOG_TAG -xe" || echo "  cat $LOG_FILE"
     exit 1
 }
@@ -67,7 +67,13 @@ install_pkg(){
         apt) sudo apt update && sudo apt install -y "$pkg" ;;
         dnf) sudo dnf install -y "$pkg" ;;
         pacman) sudo pacman -S --noconfirm "$pkg" ;;
-        atomic) distrobox enter cli -- sudo dnf install -y "$pkg" || true ;;
+        atomic)
+            if ! command -v distrobox &>/dev/null; then
+                err "Distrobox required for atomic installs."
+                exit 1
+            fi
+            distrobox enter cli -- sudo dnf install -y "$pkg" || true
+            ;;
         *) err "Unsupported distro"; exit 1 ;;
     esac
 }
@@ -85,20 +91,14 @@ clone_or_sync_repo(){
     if [ -d "$INSTALL_DIR/.git" ]; then
         log "Syncing existing installation (Favoring Remote)..."
         cd "$INSTALL_DIR"
-        
-        # Ensure remote URL is correct
         git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL"
-        
-        # 1. Fetch latest changes without merging
         log "Fetching latest from GitHub..."
-        git fetch origin main || { err "Fetch failed. Check connection."; return 1; }
-
-        # 2. Force reset local to match remote (Discards local installation changes)
+        git fetch origin main || { err "Fetch failed."; return 1; }
         log "Resetting local repo to match origin/main..."
         git reset --hard origin/main
-        ok "Local repo synchronized with GitHub."
+        ok "Local repo synchronized."
     else
-        log "Cloning repository for the first time..."
+        log "Cloning repository..."
         git clone "$REPO_URL" "$INSTALL_DIR"
     fi
 }
@@ -112,17 +112,14 @@ log "Starting linux-setup installation/update"
 ensure_git
 ensure_gh
 
-# Ensure Auth
 if ! gh auth status &>/dev/null; then
     log "Authenticating GitHub CLI"
     gh auth login -h github.com -p ssh -w
 fi
 
-# Ensure Identity
 [[ -z "$(git config --global user.name)" ]] && read -p "Git Name: " GN && git config --global user.name "$GN"
 [[ -z "$(git config --global user.email)" ]] && read -p "Git Email: " GE && git config --global user.email "$GE"
 
-# SSH Setup
 USER=$(gh api user --jq .login)
 REPO="$USER/linux-setup"
 if ! git ls-remote "git@github.com:$REPO.git" &>/dev/null; then
@@ -134,13 +131,10 @@ if ! git ls-remote "git@github.com:$REPO.git" &>/dev/null; then
     gh ssh-key add "$KEY.pub" --title "$(hostname)-setup" || true
 fi
 
-# Link GH to Git
 gh auth setup-git >/dev/null 2>&1 || true
 
-# Perform Sync
 clone_or_sync_repo
 
-# Install/Update CLI
 if [[ -f "$INSTALL_DIR/linux-setup.sh" ]]; then
     cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
     chmod +x "$BIN_DIR/linux-setup"
@@ -150,15 +144,22 @@ else
     exit 1
 fi
 
-# Path Check
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
     RC="$HOME/.bashrc"; [[ "$SHELL" == */zsh ]] && RC="$HOME/.zshrc"
     echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$RC"
-    warn "Added $BIN_DIR to $RC. Please restart your terminal."
+    warn "Added $BIN_DIR to $RC."
 fi
 
-# Run Doctor
-log "Running post-install system check..."
+log "Running post-install doctor..."
 "$BIN_DIR/linux-setup" doctor || true
+
+# --- DISTROBOX EXPORT (Atomic Fix) ---
+if [[ -f /run/.containerenv ]] || [[ -f /.dockerenv ]]; then
+    if command -v distrobox-export &>/dev/null; then
+        log "Container detected. Exporting binary to host..."
+        distrobox-export --bin "$BIN_DIR/linux-setup" --export-path "$HOME/.local/bin"
+        ok "Binary exported to host."
+    fi
+fi
 
 ok "Installation complete!"
