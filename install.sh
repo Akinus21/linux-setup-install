@@ -31,9 +31,6 @@ detect_pm(){
     else PM="unknown"; fi
 }
 
-########################################
-# Install package
-########################################
 install_pkg(){
     pkg="$1"
     case "$PM" in
@@ -103,10 +100,8 @@ clone_or_sync_repo(){
         log "Existing installation found. Syncing..."
         cd "$INSTALL_DIR"
         
-        # Ensure remote is correct
         git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL"
         
-        # Commit local changes if any
         if ! git diff --quiet || ! git diff --cached --quiet; then
             warn "Local changes detected in $INSTALL_DIR. Committing..."
             git add -A
@@ -137,9 +132,9 @@ clone_or_sync_repo(){
             git push origin main
         else
             warn "Local and Remote have diverged."
-            echo -e "${BOLD}How do you want to resolve this?${NC}"
-            echo -e "  [l] Keep ${GREEN}LOCAL${RESET} (Force push your current folder to GitHub)"
-            echo -e "  [r] Use ${BLUE}REMOTE${RESET} (Wipe local changes and use GitHub version)"
+            echo -e "${BOLD}Conflict Resolution Required:${RESET}"
+            echo -e "  [l] Keep ${GREEN}LOCAL${RESET} (Force push your version to GitHub)"
+            echo -e "  [r] Use ${BLUE}REMOTE${RESET} (Reset local to match GitHub)"
             read -r -p "Selection (l/r): " choice
             case "$choice" in
                 r|R) log "Resetting to remote..."; git reset --hard origin/main ;;
@@ -150,7 +145,7 @@ clone_or_sync_repo(){
     else
         log "Cloning linux-setup repo..."
         git clone "$REPO_URL" "$INSTALL_DIR" || {
-            err "Clone failed. Does the repository '$USER/linux-setup' exist on GitHub?"
+            err "Clone failed. Verify '$USER/linux-setup' exists on GitHub."
             exit 1
         }
     fi
@@ -173,7 +168,7 @@ ensure_path(){
         [[ "$SHELL" == */zsh ]] && SHELL_RC="$HOME/.zshrc"
         echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_RC"
         ok "Added $BIN_DIR to $SHELL_RC"
-        warn "Please restart your terminal or run: source $SHELL_RC"
+        warn "Restart shell or run: source $SHELL_RC"
     fi
 }
 
@@ -192,5 +187,10 @@ gh auth setup-git >/dev/null 2>&1 || true
 clone_or_sync_repo
 install_cli
 ensure_path
+
+# Execute doctor immediately using the local path to ensure it runs even if PATH isn't updated yet
+log "Running post-install system check..."
+"$BIN_DIR/linux-setup" sync || true
+"$BIN_DIR/linux-setup" list || true
 
 ok "Installation complete!"
