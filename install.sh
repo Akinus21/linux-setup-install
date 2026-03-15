@@ -123,7 +123,6 @@ ensure_gh_auth(){
 set +e
 gh auth status &>/dev/null
 AUTH_STATUS=$?
-set -e
 
 if [[ $AUTH_STATUS -ne 0 ]]; then
     log "Authenticating GitHub"
@@ -166,9 +165,7 @@ chmod 700 "$HOME/.ssh"
 
 ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-set +e
 SSH_TEST=$(ssh -T git@github.com 2>&1)
-set -e
 
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     ok "GitHub SSH already configured"
@@ -186,9 +183,8 @@ else
 
     log "Testing SSH authentication"
 
-    set +e
     ssh -T git@github.com
-    set -e
+    
 
     ok "SSH authentication configured"
 
