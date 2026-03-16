@@ -28,8 +28,7 @@ clone_or_sync_repo
 cp "$INSTALL_DIR/linux-setup.sh" "$BIN_DIR/linux-setup"
 chmod +x "$BIN_DIR/linux-setup"
 
-# Do NOT run distrobox-export here — it must be run from inside the container
-# Only warn if on Atomic, remind user to run `linux-setup doctor` inside the container
+# No longer run distrobox-export here (must run inside container)
 if command -v rpm-ostree &>/dev/null; then
     log "Atomic host detected: remember to run 'linux-setup doctor' inside the Distrobox container to export the binary."
 fi
