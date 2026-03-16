@@ -6,19 +6,33 @@ mkdir -p "$BIN_DIR" "$INSTALL_DIR"
 log(){ echo -e "\033[34m➜\033[0m $1"; }
 ok(){ echo -e "\033[32m✔\033[0m $1"; }
 
-# Ensure GitHub auth on host (non-interactive only)
-if ! gh auth status &>/dev/null; then
-    log "Authenticating GitHub CLI (non-interactive)..."
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        echo "$GITHUB_TOKEN" | gh auth login --with-token || {
-            log "GITHUB_TOKEN is invalid. Please set it in your environment."
-            exit 1
-        }
-        gh auth setup-git || true
+# Ensure gh is installed (use brew on macOS if needed)
+if ! command -v gh &>/dev/null; then
+    if command -v brew &>/dev/null; then
+        log "Installing GitHub CLI via Homebrew..."
+        brew install gh || { err "Failed to install gh via brew."; exit 1; }
+        ok "GitHub CLI installed."
     else
-        log "No GITHUB_TOKEN found. Please set it in your environment or authenticate manually: gh auth login"
+        err "GitHub CLI (gh) not found and brew not available. Please install gh manually."
         exit 1
     fi
+fi
+
+# Authenticate GitHub CLI (non-interactive if GITHUB_TOKEN is set)
+if ! gh auth status &>/dev/null; then
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        log "Authenticating GitHub CLI using GITHUB_TOKEN..."
+        echo "$GITHUB_TOKEN" | gh auth login --with-token || {
+            err "GitHub auth failed. Please verify GITHUB_TOKEN is valid."
+            exit 1
+        }
+    else
+        log "GitHub CLI is not authenticated."
+        log "Please set GITHUB_TOKEN in your environment, or run 'gh auth login' manually."
+        exit 1
+    fi
+    # Configure git credential helper [1]
+    gh auth setup-git || true
 fi
 
 get_github_user() {
@@ -46,7 +60,6 @@ chmod +x "$BIN_DIR/linux-setup"
 # Ensure container exists and is properly configured (Atomic only)
 if command -v rpm-ostree &>/dev/null; then
     log "Atomic host detected: ensuring Distrobox container..."
-    # Check if container exists
     if ! podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "linux-setup"; then
         log "Creating 'linux-setup' container with host GitHub auth..."
         distrobox create \
@@ -55,12 +68,10 @@ if command -v rpm-ostree &>/dev/null; then
             --volume "$HOME/.config/gh:$HOME/.config/gh:ro" \
             --pull
         sleep 3
-        # Verify container exists
         if ! podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "linux-setup"; then
             err "Container 'linux-setup' failed to appear. Check 'podman ps -a'."
             exit 1
         fi
-        # Install dependencies and configure git-credential inside container [2]
         log "Installing dependencies in container..."
         distrobox enter "linux-setup" -- sudo dnf install -y git gh jq gnupg2 coreutils
         distrobox enter "linux-setup" -- gh auth git-credential > /dev/null 2>&1 || true
