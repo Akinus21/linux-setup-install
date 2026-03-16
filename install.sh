@@ -27,9 +27,10 @@ if ! gh auth status &>/dev/null; then
             exit 1
         }
     else
-        log "GitHub CLI is not authenticated."
-        log "Please set GITHUB_TOKEN in your environment, or run 'gh auth login' manually."
-        exit 1
+        gh auth login || {
+            err "GitHub auth failed. Please run 'gh auth login' manually."
+            exit 1
+        }
     fi
     # Configure git credential helper [1]
     gh auth setup-git || true
